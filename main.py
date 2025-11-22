@@ -1,6 +1,7 @@
 import requests
 import os
 import sys
+from datetime import datetime
 
 try:
     from dotenv import load_dotenv
@@ -26,6 +27,8 @@ def send_notification(title, content):
         return
 
     url = "http://www.pushplus.plus/send"
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    content += f"<br><br>------------<br>推送时间: {current_time}"
     data = {
         "token": token,
         "title": title,
@@ -112,4 +115,5 @@ def luogu_punch():
 
 if __name__ == "__main__":
     luogu_punch()
+
 
