@@ -181,6 +181,6 @@ jobs:
 
             GitHub Actions 自动发送
             查看详情：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          to: mrfrank520@163.com
+          to: mrfrank520@163.com # 请于此处自行更改为你自己的邮件。
           from: GitHub Actions <${{ secrets.EMAIL_USERNAME }}>
           content_type: text/plain
