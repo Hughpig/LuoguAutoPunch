@@ -1,12 +1,13 @@
-name: 洛谷自动打卡
+name: 洛谷+掘金自动打卡 (含邮件日报)
 
 on:
   # 1. 定时触发
   schedule:
-    #这是 UTC 时间的 00:00，对应北京时间早上 08:00
+    # 北京时间 08:00
     - cron: '0 0 * * *'
+    # 北京时间 20:00 (补签)
     - cron: '0 12 * * *'
-  # 2. 允许手动触发 (方便测试)
+  # 2. 允许手动触发
   workflow_dispatch:
 
 jobs:
@@ -14,31 +15,104 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    # 第一步：下载你的代码仓库
+    # 第一步：下载代码
     - name: Checkout Code
       uses: actions/checkout@v3
 
-    # 第二步：安装 Python 环境
+    # 第二步：安装 Python
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.9'
 
-    # 第三步：安装 requests 库
+    # 第三步：安装依赖 (保留了 Playwright，为了掘金)
     - name: Install Dependencies
       run: |
         pip install -r requirements.txt
         playwright install chromium
 
-    # 第四步：运行脚本
-    - name: Run Punch Script
+    # 第四步：核心融合 (运行所有脚本 + 捕获日志)
+    - name: Run Scripts & Capture Log
+      id: punch-script
       env:
-        # 把 Secrets 里的密码注入到环境变量中
+        # 注入所有的 Token/Cookie
         LUOGU_COOKIE: ${{ secrets.LUOGU_COOKIE }}
-        PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
-      run: python main.py
-    - name: Run Juejin Script
-      env:
         JUEJIN_COOKIE: ${{ secrets.JUEJIN_COOKIE }}
         PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
-      run: python juejin.py
+      run: |
+        # 使用 { ... } 包裹，将内部所有输出合并处理
+        {
+          echo "==============================================="
+          echo "🚀 1. 开始执行 洛谷打卡 (main.py)"
+          echo "==============================================="
+          # || echo 防止洛谷报错导致掘金不跑
+          python main.py || echo "❌ 洛谷脚本执行异常"
+          
+          echo -e "\n\n"
+          echo "==============================================="
+          echo "🚀 2. 开始执行 掘金打卡 (juejin.py)"
+          echo "==============================================="
+          python juejin.py || echo "❌ 掘金脚本执行异常"
+          
+        } 2>&1 | tee log.txt
+        # 2>&1 | tee log.txt 的意思是：把屏幕上显示的字，同时保存一份到 log.txt
+
+    # 第五步：读取日志内容 (为发邮件做准备)
+    - name: Read log content
+      id: read_log
+      if: always() # 即使脚本报错，也要执行这步
+      run: |
+        if [ -f "log.txt" ]; then
+          # 读取日志前 50000 个字符
+          LOG_CONTENT=$(cat log.txt | head -c 50000)
+          # 写入输出变量
+          echo "log_content<<EOF" >> $GITHUB_OUTPUT
+          echo "$LOG_CONTENT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "log_exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "log_content=日志文件未生成" >> $GITHUB_OUTPUT
+          echo "log_exists=false" >> $GITHUB_OUTPUT
+        fi
+
+    # 第六步：上传日志文件 (方便在 GitHub 网页下载)
+    - name: Upload log file
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: punch-log
+        path: log.txt
+        retention-days: 7
+
+    # 第七步：发送邮件 (整合了 PR 的功能)
+    - name: Send Email
+      if: steps.read_log.outputs.log_exists == 'true'
+      uses: dawidd6/action-send-mail@v3
+      with:
+        # 👇 1. 修改邮件服务器 (QQ邮箱用 smtp.qq.com)
+        server_address: smtp.qq.com
+        server_port: 465
+        
+        # 👇 2. 确保 Secrets 里配好了这两个
+        username: ${{ secrets.EMAIL_USERNAME }}
+        password: ${{ secrets.EMAIL_PASSWORD }}
+        
+        subject: '每日打卡日报 - ${{ github.repository }}'
+        
+        # 邮件正文：直接显示刚才捕获的日志
+        body: |
+          自动打卡任务执行报告
+          
+          运行时间: $(date "+%Y-%m-%d %H:%M:%S")
+          
+          详细日志：
+          --------------------------------------------------
+          ${{ steps.read_log.outputs.log_content }}
+          --------------------------------------------------
+          
+          (本邮件由 GitHub Actions 自动发送)
+        
+        # 👇 3. 修改收件人 (改成你自己的！)
+        to: 123456@qq.com
+        from: 打卡助手 <${{ secrets.EMAIL_USERNAME }}>
+        content_type: text/plain
