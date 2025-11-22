@@ -4,7 +4,7 @@ on:
   # 1. 定时触发
   schedule:
     #这是 UTC 时间的 00:00，对应北京时间早上 08:00
-    - cron: '46 0 * * *'
+    - cron: '0 0 * * *'
     - cron: '0 12 * * *'
   # 2. 允许手动触发 (方便测试)
   workflow_dispatch:
