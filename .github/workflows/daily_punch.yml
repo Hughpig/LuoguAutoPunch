@@ -12,6 +12,8 @@ on:
 jobs:
   punch:
     runs-on: ubuntu-latest
+    outputs:
+      success: ${{ steps.punch-script.outcome == 'success' }}
     
     steps:
     # 第一步：下载你的代码仓库
@@ -24,21 +26,161 @@ jobs:
       with:
         python-version: '3.9'
 
-    # 第三步：安装 requests 库
+    # 第三步：安装依赖
     - name: Install Dependencies
       run: |
         pip install -r requirements.txt
         playwright install chromium
 
-    # 第四步：运行脚本
+    # 第四步：运行脚本并输出到日志
     - name: Run Punch Script
+      id: punch-script
       env:
         # 把 Secrets 里的密码注入到环境变量中
         LUOGU_COOKIE: ${{ secrets.LUOGU_COOKIE }}
         PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
-      run: python main.py
-    - name: Run Juejin Script
-      env:
-        JUEJIN_COOKIE: ${{ secrets.JUEJIN_COOKIE }}
-        PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
-      run: python juejin.py
+      run: |
+        # 同时输出到控制台和日志文件
+        python main.py 2>&1 | tee log.txt
+        
+        # 检查脚本执行状态
+        if [ ${PIPESTATUS[0]} -eq 0 ]; then
+          echo "Punch script executed successfully"
+        else
+          echo "Punch script failed"
+          exit 1
+        fi
+
+    # 第五步：上传日志文件作为产物（可选，便于调试）
+    - name: Upload log file
+      uses: actions/upload-artifact@v4
+      with:
+        name: punch-log
+        path: log.txt
+        retention-days: 7
+
+  send-log-content:
+    runs-on: ubuntu-latest
+    needs: punch
+    if: always()  # 即使 punch job 失败也发送邮件
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 下载 punch job 生成的日志文件
+      - name: Download log artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: punch-log
+          path: ./
+
+      - name: Read log content
+        id: read_log
+        run: |
+          if [ -f "log.txt" ]; then
+            # 读取日志内容，限制长度避免邮件过大
+            LOG_CONTENT=$(cat log.txt | head -c 50000)
+            echo "log_content<<EOF" >> $GITHUB_OUTPUT
+            echo "$LOG_CONTENT" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "log_exists=true" >> $GITHUB_OUTPUT
+            
+            # 显示日志文件信息
+            echo "Log file info:"
+            ls -la log.txt
+            echo "First few lines of log:"
+            head -5 log.txt
+          else
+            echo "log_content=Log file not found" >> $GITHUB_OUTPUT
+            echo "log_exists=false" >> $GITHUB_OUTPUT
+            echo "Available files in current directory:"
+            ls -la
+          fi
+
+      - name: Send success email
+        if: needs.punch.outputs.success == 'true' && steps.read_log.outputs.log_exists == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.163.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: '✅ 洛谷打卡成功 - ${{ github.repository }}'
+          body: |
+            洛谷自动打卡任务已完成 ✅
+
+            仓库信息：
+            - 仓库：${{ github.repository }}
+            - 分支：${{ github.ref }}
+            - 运行ID：${{ github.run_id }}
+            - 状态：打卡任务成功完成
+
+            执行日志：
+            ========
+            ${{ steps.read_log.outputs.log_content }}
+
+            GitHub Actions 自动发送
+            查看详情：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          to: mrfrank520@163.com
+          from: GitHub Actions <${{ secrets.EMAIL_USERNAME }}>
+          content_type: text/plain
+
+      - name: Send failure email
+        if: needs.punch.outputs.success == 'false' && steps.read_log.outputs.log_exists == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.163.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: '❌ 洛谷打卡失败 - ${{ github.repository }}'
+          body: |
+            洛谷自动打卡任务失败 ❌
+
+            仓库信息：
+            - 仓库：${{ github.repository }}
+            - 分支：${{ github.ref }}
+            - 运行ID：${{ github.run_id }}
+            - 状态：打卡任务执行失败
+
+            错误日志：
+            ========
+            ${{ steps.read_log.outputs.log_content }}
+
+            请检查打卡脚本的执行情况。
+
+            GitHub Actions 自动发送
+            查看详情：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          to: mrfrank520@163.com
+          from: GitHub Actions <${{ secrets.EMAIL_USERNAME }}>
+          content_type: text/plain
+
+      - name: Send no-log email
+        if: steps.read_log.outputs.log_exists == 'false'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.163.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: '⚠️ 洛谷打卡 - 日志文件未找到 - ${{ github.repository }}'
+          body: |
+            洛谷自动打卡任务完成，但日志文件未找到 ⚠️
+
+            仓库信息：
+            - 仓库：${{ github.repository }}
+            - 分支：${{ github.ref }}
+            - 运行ID：${{ github.run_id }}
+            - Punch Job 状态：${{ needs.punch.outputs.success }}
+
+            可能的原因：
+            - 脚本执行异常，未生成日志文件
+            - 文件路径错误
+            - 权限问题
+
+            GitHub Actions 自动发送
+            查看详情：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          to: mrfrank520@163.com
+          from: GitHub Actions <${{ secrets.EMAIL_USERNAME }}>
+          content_type: text/plain
