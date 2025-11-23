@@ -164,12 +164,16 @@ class JuejinBrowser:
                 
                 else:
                     # 2. 检查是否变成了“单抽”或“200”
-                    if page.get_by_text("单抽").is_visible() or page.get_by_text("200").is_visible():
-                        print("✅ 检测到今日已抽奖")
+                    has_paid_btn = page.get_by_text("单抽").count() > 0
+                    has_cost_text = page.get_by_text("200", exact=True).count() > 0
+                    
+                    if has_paid_btn or has_cost_text:
+                        print("✅ 检测到今日已抽奖 (付费按钮已显示)")
                         msg_log.append("✅ 抽奖: 今日已完成")
                     else:
-                        print("⚠️ 未找到抽奖按钮")
-                        msg_log.append("⚠️ 抽奖: 按钮未找到 (可能已完成)")
+                        # 最后的保底：如果既没免费也没单抽，可能是页面改版，但也算“没报错”
+                        print("⚠️ 未找到抽奖按钮 (可能已完成)")
+                        msg_log.append("⚠️ 抽奖: 状态未知 (未找到按钮)")
                         
             except Exception as e:
                 print(f"❌ 抽奖出错: {e}")
@@ -190,4 +194,5 @@ class JuejinBrowser:
 
 if __name__ == "__main__":
     JuejinBrowser().run()
+
 
